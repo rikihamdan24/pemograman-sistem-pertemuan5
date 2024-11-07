@@ -1,151 +1,105 @@
-import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import pickle
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import LabelEncoder
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# Load dataset
+df = pd.read_csv('/workspaces/pemograman-sistem-pertemuan5/Android_Malware_Benign.csv')
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
-
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
-
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
-
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
-
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
+# Pilih subset fitur yang diinginkan
+selected_features = [
+    'ACCESS_ALL_DOWNLOADS', 'ACCESS_CACHE_FILESYSTEM', 'ACCESS_COARSE_LOCATION',
+    'ACCESS_FINE_LOCATION', 'ACCESS_NETWORK_STATE', 'android.permission.READ_SMS'
 ]
 
-st.header('GDP over time', divider='gray')
+# Pastikan fitur yang dipilih ada di dataset
+X = df[selected_features]  # Gunakan kolom yang dipilih untuk fitur
+y = df['Label']  # Kolom target
 
-''
+# Konversi target ke label numerik jika diperlukan
+label_encoder = LabelEncoder()
+y = label_encoder.fit_transform(y)
 
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
+# Membagi dataset menjadi data train dan test
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0)
 
-''
-''
+# Melatih model
+classifier = RandomForestClassifier()
+classifier.fit(X_train, y_train)
 
+# Mengecek akurasi model
+y_pred = classifier.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+print(f"Akurasi model dengan fitur yang dipilih: {accuracy}")
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+# Menyimpan model dan label encoder ke file
+with open("classifier_selected_features.pkl", "wb") as model_file:
+    pickle.dump(classifier, model_file)
 
-st.header(f'GDP in {to_year}', divider='gray')
+with open("label_encoder.pkl", "wb") as encoder_file:
+    pickle.dump(label_encoder, encoder_file)
 
-''
+import streamlit as st
+import pickle
 
-cols = st.columns(4)
+# Memuat model dan label encoder
+with open("classifier_selected_features.pkl", "rb") as model_file:
+    classifier = pickle.load(model_file)
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+with open("label_encoder.pkl", "rb") as encoder_file:
+    label_encoder = pickle.load(encoder_file)
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
+# Fungsi prediksi menggunakan model
+def prediction(features):
+    pred = classifier.predict([features])
+    return pred
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+# Fungsi untuk mengonversi hasil prediksi ke label yang sesuai
+def map_prediction_to_class(prediction):
+    # Mengembalikan label asli, misalnya 'Malicious' atau 'Benign'
+    return label_encoder.inverse_transform([prediction])[0]
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+# Streamlit
+def main():
+    # Judul halaman
+    st.title("Malware Classification Prediction")
+
+    # Desain halaman dengan HTML dan tambahan nama
+    html_temp = """
+    <div style="background-color:yellow;padding:13px">
+    <h1 style="color:black;text-align:center;">Malware Classifier ML App</h1>
+    <h2 style="color:blue;text-align:center;">Riki Hamdan Sucipto 22220038</h4>
+    </div>
+    """
+    st.markdown(html_temp, unsafe_allow_html=True)
+
+    # Input dari user (fitur sesuai dataset)
+    access_all_downloads = st.number_input("ACCESS_ALL_DOWNLOADS", value=0)
+    access_cache_filesystem = st.number_input("ACCESS_CACHE_FILESYSTEM", value=0)
+    access_coarse_location = st.number_input("ACCESS_COARSE_LOCATION", value=0)
+    access_fine_location = st.number_input("ACCESS_FINE_LOCATION", value=0)
+    access_network_state = st.number_input("ACCESS_NETWORK_STATE", value=0)
+    read_sms = st.number_input("android.permission.READ_SMS", value=0)
+
+    # Menggabungkan input menjadi satu list untuk prediksi
+    features = [
+        access_all_downloads, access_cache_filesystem, access_coarse_location,
+        access_fine_location, access_network_state, read_sms
+    ]
+
+    result = ""
+
+    # Tombol prediksi
+    if st.button("Predict"):
+        # Melakukan prediksi
+        prediction_result = prediction(features)
+
+        # Konversi hasil prediksi ke label asli (Malicious atau Benign)
+        result = map_prediction_to_class(prediction_result[0])
+
+    st.success(f'The system is classified as: {result}')
+
+if __name__ == '__main__':
+    main()
